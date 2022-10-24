@@ -1,0 +1,12 @@
+#BlueJ class context
+comment0.target=ga
+comment1.params=
+comment1.target=void\ random()
+comment2.params=
+comment2.target=void\ fit()
+comment3.params=
+comment3.target=void\ select()
+comment4.params=
+comment4.target=void\ main()
+comment4.text=public\ void\ cross()\ \r\n\ \ \ {\r\n\ \ \ \ int\ i,j\=0;\r\n\ \ \ \ //int\ max\=4;\r\n\ \ \ \ int\ max\=rd.nextInt()*10;\r\n\ \ \ \ for(i\=0;i<list.size();i\=i+22)\r\n\ \ \ \ \ \ {\r\n\ \ \ \ \ \ \ \ j\=i;\r\n\ \ \ \ \ \ \ \ max+\=j;\r\n\ \ \ \ \ \ \ \ while(j<\=max&&j+11<list.size())\r\n\ \ \ \ \ \ \ \ {\r\n\ \ \ \ \ \ \ \ Collections.swap(list,j,j+11);\r\n\ \ \ \ \ \ \ \ j++;\r\n\ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ }\r\n\ \ \ \ \ \ for(int\ index\=0;index<list.size();index++){\r\n\ \ \ \ \ \ \ \ \ \ System.out.print(list.get(index));\r\n\ \ \ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ \ \ System.out.println();\ \ \r\n\ \ \ \ }\r\n\ \ public\ void\ mutate()\ \r\n\ \ \ \ {\r\n\ \ \ \ \ \ int\ i,j;\r\n\ \ \ \ \ \ for(i\=0;i<list.size();i++)\r\n\ \ \ \ \ \ {\r\n\ \ \ \ \ \ int\ rand\=(int)(Math.random()*list.size());\r\n\ \ \ \ \ \ \ \ if(list.get(rand)\=\=0)\r\n\ \ \ \ \ \ \ \ {\r\n\ \ \ \ \ \ \ \ \ list.set(rand,1);\r\n\ \ \ \ \ \ \ \ \ //list.remove(j+1);\r\n\ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ if(list.get(rand)\=\=1)\r\n\ \ \ \ \ \ \ \ {\r\n\ \ \ \ \ \ \ \ \ list.set(rand,0);\r\n\ \ \ \ \ \ \ \ \ //list.remove(j+1);\r\n\ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ }\r\n\ \ \ \ \ for(int\ index\=0;index<list.size();index++){\r\n\ \ \ \ \ \ \ \ \ \ System.out.print(list.get(index));\r\n\ \ \ \ \ \ \ \ \ \ }\r\n\ \ \ \ \ \ \ \ \ \ System.out.println();\ \r\n}
+numComments=5

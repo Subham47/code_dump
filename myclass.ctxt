@@ -1,0 +1,17 @@
+#BlueJ class context
+comment0.target=myclass
+comment1.params=
+comment1.target=void\ randompopulation()
+comment2.params=thresh
+comment2.target=void\ fitness(int)
+comment3.params=thresh
+comment3.target=void\ selection(int)
+comment4.params=thresh
+comment4.target=void\ crossover(int)
+comment5.params=thresh
+comment5.target=void\ mutation(int)
+comment6.params=thresh
+comment6.target=int[]\ print(int)
+comment7.params=
+comment7.target=void\ main()
+numComments=8
