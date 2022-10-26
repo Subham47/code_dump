@@ -1,0 +1,206 @@
+select * from customer;
+
+select region, count(customer_id) as customer_count from customer group by region having count(customer_id)>200;
+
+select region, count(customer_id) as customer_count from customer where customer_name like 'A%' group by region having count(customer_id)>15;
+
+select product_id, sum(sales) as total_amt, sum(quantity) as total_quantity,count(product_id) as total_orders,max(sales) as max_sales,
+min(sales) as min_sales,avg(sales) as avg_sales
+from sales
+group by product_id order by total_amt desc;
+
+select product_id ,sum(quantity) as total_quantity from sales group by product_id having sum(quantity)>10;
+
+select *, case
+              when age<30 then 'Young'
+			  when age>60 then 'Senior Citizen'
+			  else 'Middle_aged'
+			  end as Age_category
+from customer;
+
+
+
+create table sales_2015 as select * from sales where ship_date between '2015-01-01' and '2015-12-31';
+
+select count(*) from sales_2015; 
+
+select count(distinct customer_id) from sales_2015;
+
+
+
+
+create table customer_20_60 as select * from customer where age between 20 and 60;
+
+select count(*) from customer_20_60;
+
+
+
+select 
+      a.order_line,
+	  a.product_id,
+	  a.customer_id,
+	  a.sales,
+	  b.customer_name,
+	  b.age
+from sales_2015 as a
+inner join customer_20_60 as b
+on a.customer_id=b.customer_id
+order by customer_id;
+
+select customer_id from sales_2015 order by customer_id;
+select customer_id from customer_20_60 order by customer_id;
+
+
+
+
+
+
+select a.order_line,
+a.product_id,
+a.sales,
+a.customer_id,
+b.customer_name,
+b.age
+from sales_2015 as a
+left join customer_20_60 as b
+on
+a.customer_id=b.customer_id
+order by customer_id;
+
+
+
+
+select 
+      a.order_line,
+	  a.product_id,
+	  b.customer_id,
+	  a.sales,
+	  b.customer_name,
+	  b.age
+from sales_2015 as a 
+right join customer_20_60 as b
+on
+a.customer_id=b.customer_id
+order by customer_id;
+	  
+
+
+
+select a.order_id,
+       a.product_id,
+	   a.customer_id,
+	   a.sales,
+	   b.customer_id,
+	   b.customer_name,
+	   b.age
+from sales_2015 as a
+full join customer_20_60 as b
+on
+a.customer_id=b.customer_id
+order by a.customer_id,b.customer_id;
+
+
+create table month_values (mm integer);
+create table year_values (yyyy integer);
+
+insert into month_values values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12);
+insert into year_values values (2011),(2012),(2013),(2014),(2015),(2016),(2017),(2018),(2019);
+
+select * from month_values;
+select * from year_values;
+
+select a.yyyy,b.mm
+from year_values as a,month_values as b
+order by a.yyyy,b.mm;
+
+
+select customer_id from sales_2015
+intersect
+select customer_id from customer_20_60;
+
+
+select customer_id from sales_2015
+intersect all
+select customer_id from customer_20_60;
+
+
+select customer_id from sales_2015
+except
+select customer_id from customer_20_60
+order by customer_id;
+
+
+select customer_id from sales_2015
+union all
+select customer_id from customer_20_60
+order by customer_id;
+
+
+select * from sales_2015;
+select * from customer_20_60;
+
+select 
+      a.customer_id,
+	  a.sales,
+	  b.state,
+	  b.customer_id
+from sales_2015 as a
+full join customer_20_60 as b
+on
+a.customer_id=b.customer_id
+group by state
+order by a.customer_id,b.customer_id;
+	  
+	  
+	  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
