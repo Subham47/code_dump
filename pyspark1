@@ -1,0 +1,145 @@
+from pyspark.sql.functions import *
+from pyspark.sql import Window
+from pyspark.sql import SparkSession
+from pyspark import SparkConf
+
+from datetime import datetime,timedelta
+import json
+import sys
+import pymysql
+from urllib.parse import urlparse
+from urllib.parse import quote_plus as urlquote
+from sqlalchemy import create_engine
+from delete_file_from_s3 import _del_
+
+conf=SparkConf()
+conf.set('spark.ui.port','50445')
+conf.set('spark.port.maxRetries','100')
+conf.set('spark.memory.offHeap.enabled','true')
+conf.set('spark.memory.offHeap.size','16g')
+conf.set('spark.driver.memory','20g')
+conf.set('spark.executor.memory','20g')
+conf.set("mapreduce.fileoutputcommitter.marksuccessfuljobs","false")
+spark=SparkSession.builder.config(conf=conf).getOrCreate()
+
+date=str(datetime.now().date() - timedelta(days=1))
+#date='2023-06-26'
+print('Running for date:',date)
+
+with open('config.json') as f:
+    config=json.loads(f.read())
+
+for spec in range(len(config.get('impression').get('package_specs'))):
+    package_spec = config.get('impression').get('package_specs')[spec]
+    package = package_spec.get('name')
+    print(package)
+    channel = package_spec.get('channel')
+    status = package_spec.get('status')
+
+    if status == 'True':
+        try:
+            bucket='wafs-v3-bucket'
+            folder=f'v4/modified_v4_ofa/processed/mf_data_type=impression/mf_package_name={package}/channel={channel}/inserted_date={date}'
+            _del_(bucket,folder)
+        except Exception as e:
+            print(e)
+            pass
+        c1_percentage=package_spec.get('counts').get('c1')
+        ll1=int(list(package_spec.get('c1').keys())[0])
+        ul1=int(package_spec.get('c1').get(str(ll1)))
+
+        c2_percentage=package_spec.get('counts').get('c2')
+        ll2=int(list(package_spec.get('c2').keys())[0])
+        ul2=int(package_spec.get('c2').get(str(ll2)))
+
+        c3_percentage=package_spec.get('counts').get('c3')
+        ll3=int(list(package_spec.get('c3').keys())[0])
+        ul3=int(package_spec.get('c3').get(str(ll3)))
+
+        c4_percentage=package_spec.get('counts').get('c4')
+        ll4=int(list(package_spec.get('c4').keys())[0])
+        ul4=int(package_spec.get('c4').get(str(ll4)))
+
+        c5_percentage=package_spec.get('counts').get('c5')
+        ll5=int(list(package_spec.get('c5').keys())[0])
+        ul5=int(package_spec.get('c5').get(str(ll5)))
+
+        c6_percentage=package_spec.get('counts').get('c6')
+        ll6=int(list(package_spec.get('c6').keys())[0])
+        ul6=int(package_spec.get('c6').get(str(ll6)))
+
+        try:
+            sdf=spark.read.parquet(f's3a://wafs-v3-bucket/v4/v4_ofa/processed/mf_data_type=impression/mf_package_name={package}/channel={channel}/inserted_date={date}/*/*/*.parquet',header=True)
+            print(sdf.count())
+            print(sdf.columns)
+            sdf=sdf.withColumn('bundle_id',get_json_object(sdf.internal_extended_data,'$.mf_custom_BUNDLEID'))
+            sdf.groupBy('bundle_id').count().show()
+            sdfweb=sdf.filter(sdf.bundle_id == '')
+            print(sdfweb.count())
+            sdfapp=sdf.filter(sdf.bundle_id != '')
+            print(sdfapp.count())
+            sdf=sdf.drop('bundle_id')
+            sdfweb=sdfweb.drop('bundle_id')
+            sdfapp=sdfapp.drop('bundle_id')
+            sdf1=sdfapp.groupBy('creative_type').count().sort(col('count').desc())
+            sdfapp.unpersist()
+            print(sdf1.count())
+            sdf1.unpersist()
+            sdf2=sdf1.limit(20)
+            print(sdf2.count())
+            sdf2_list=sdf2.select('creative_type').rdd.flatMap(lambda x:x).collect()
+            sdf_included = sdfapp.filter(sdfapp.creative_type.isin(sdf2_list))
+            print('included counts:',sdf_included.count())
+            sdf_notincluded = sdfapp.filter(~sdfapp.creative_type.isin(sdf2_list))
+            print('not included counts',sdf_notincluded.count())
+            #sdf_included = sdf_included.withColumn('creative_pl',concat_ws('_',*[creative_type,placement_id]))
+            window = Window.partitionBy("creative_type").orderBy("creative_type")
+            sdf_included=sdf_included.withColumn("row_number",row_number().over(window))
+
+            sdff=sdf_included.join(sdf2,'creative_type','left')
+            sdf_included.unpersist()
+            sdf2.unpersist()
+            #sdff=sdff.withColumn('count',when((col('count')>9000),lit(0.7*sdff['count'])).when((col('count')>7000)|(col('count')<=9000),lit(0.78*sdff['count'])).when((col('count')>4000)|(col('count')<=7000),lit(0.85*sdff['count'])).when((col('count')>2000)|(col('count')<=4000),lit(sdff['count']-800)))
+            #sdff=sdff.withColumn('count',when((col('count')>ll1)&(col('count')<ul1),lit((1-c1_percentage)*sdff['count'])).when((col('count')>ll2)|(col('count')<=ul2),lit((1-c2_percentage)*sdff['count'])).when((col('count')>ll3)|(col('count')<=ul3),lit((1-c3_percentage)*sdff['count'])).when((col('count')>ll4)&(col('count')<ul4),lit((1-c4_percentage)*sdff['count'])).when((col('count')>ll5)|(col('count')<=ul5),lit((1-c5_percentage)*sdff['count'])).when((col('count')>ll6)|(col('count')<=ul6),lit((1-c6_percentage)*sdff['count'])).when((col('count')<2000),lit(sdff['count']-500)))
+            #sdff=sdff.withColumn('count',lit(0.75*sdff['count']))
+            sdff=sdff.withColumn('count',when((col('count')>ll1)&(col('count')<ul1),lit((1-c1_percentage)*sdff['count'])).when((col('count')>ll2)&(col('count')<=ul2),lit((1-c2_percentage)*sdff['count'])).when((col('count')>ll3)&(col('count')<=ul3),lit((1-c3_percentage)*sdff['count'])).when((col('count')>ll4)&(col('count')<ul4),lit((1-c4_percentage)*sdff['count'])).when((col('count')>ll5)&(col('count')<=ul5),lit((1-c5_percentage)*sdff['count'])).when((col('count')>ll6)&(col('count')<=ul6),lit((1-c6_percentage)*sdff['count'])).when((col('count')<2000),lit(sdff['count']-500)))
+            sdff=sdff.withColumnRenamed('count','count_')
+            sdff = sdff.filter(sdff.row_number <= sdff.count_)
+            sdff=sdff.drop('row_number','count_')
+
+            sdf_notincluded=sdf_notincluded.select('creative_type', 'package_name', 'inserted_date', 'date_time', 'ip', 'country', 'channel', 'utm_source', 'utm_medium', 'utm_term', 'utm_content', 'utm_campaign', 'publisher_name', 'sub_publisher_name', 'campaign_name', 'placement_id', 'ad_group_id', 'keyword', 'click_id', 'mf_click_id', 'referral_url', 'landing_page_url', 'page_title', 'fraud_description', 'user_agent', 'device_type', 'device_make', 'device_model', 'ua_os', 'ua_browser', 'global_cookie_value', 'cookie_value', 'cookie_visitor_visit_id', 'cookie_all_utms', 'dss1', 'dss2', 'dss3', 'hasIframe', 'hasfocus', 'timezone_offset', 'timezone', 'cookie_enabled', 'session_storage', 'local_storage', 'indexed_db', 'add_behavior', 'open_database', 'cpu_class', 'platform', 'webdriver', 'language', 'color_depth', 'device_memory', 'hardware_concurrency', 'screen_resolution', 'available_screen_resolution', 'plugins', 'canvas', 'webgl', 'webgl_vendor_renderer', 'ad_block', 'touchSupport', 'fonts', 'audio', 'sorting_time', 'send_beacon', 'ancestor_origins', 'domainlookup_start', 'domainlookup_end', 'connect_start', 'connect_end', 'downlink_speed', 'redirect_count', 'battery', 'network', 'phantom_js', 'nightmare_js', 'history_length', 'multimedia_device', 'lat', 'long', 'param_1', 'param_2', 'param_3', 'param_4', 'param_5', 'internal_extended_data', 'apps_errors', 'vpn', 'isp', 'view_status', 'fraud_category', 'fraud_sub_category')
+            sdff = sdff.union(sdf_notincluded)
+            sdf_notincluded.unpersist()
+            sdfweb=sdfweb.select('creative_type', 'package_name', 'inserted_date', 'date_time', 'ip', 'country', 'channel', 'utm_source', 'utm_medium', 'utm_term', 'utm_content', 'utm_campaign', 'publisher_name', 'sub_publisher_name', 'campaign_name', 'placement_id', 'ad_group_id', 'keyword', 'click_id', 'mf_click_id', 'referral_url', 'landing_page_url', 'page_title', 'fraud_description', 'user_agent', 'device_type', 'device_make', 'device_model', 'ua_os', 'ua_browser', 'global_cookie_value', 'cookie_value', 'cookie_visitor_visit_id', 'cookie_all_utms', 'dss1', 'dss2', 'dss3', 'hasIframe', 'hasfocus', 'timezone_offset', 'timezone', 'cookie_enabled', 'session_storage', 'local_storage', 'indexed_db', 'add_behavior', 'open_database', 'cpu_class', 'platform', 'webdriver', 'language', 'color_depth', 'device_memory', 'hardware_concurrency', 'screen_resolution', 'available_screen_resolution', 'plugins', 'canvas', 'webgl', 'webgl_vendor_renderer', 'ad_block', 'touchSupport', 'fonts', 'audio', 'sorting_time', 'send_beacon', 'ancestor_origins', 'domainlookup_start', 'domainlookup_end', 'connect_start', 'connect_end', 'downlink_speed', 'redirect_count', 'battery', 'network', 'phantom_js', 'nightmare_js', 'history_length', 'multimedia_device', 'lat', 'long', 'param_1', 'param_2', 'param_3', 'param_4', 'param_5', 'internal_extended_data', 'apps_errors', 'vpn', 'isp', 'view_status','fraud_category', 'fraud_sub_category')
+            sdff = sdff.union(sdfweb)
+            sdfweb.unpersist()
+            print('Before modification:')
+            sdf.groupBy('fraud_sub_category').count().show()
+            print(sdf.count())
+            print('After modification:')
+            sdff.groupBy('fraud_sub_category').count().show()
+            print(sdff.count())
+            print('Creatives check:')
+            print('Before:')
+            sdf.groupBy('creative_type').count().sort(col('count').desc()).show()
+            sdf.unpersist()
+            print('After:')
+            sdff.groupBy('creative_type').count().sort(col('count').desc()).show()
+            sdff.groupBy('creative_type').count().sort(col('count').desc()).toPandas().to_csv(f's3://wafs-v3-test-bucket/impression_csv/imp_placement_counts/{package}/{date}/new_modified_test_data_placement_wise_counts_{date}.csv',index=False)
+            #sdff.groupBy('creative_type').count().sort(col('count').desc()).toPandas().to_csv(f's3://wafs-v3-test-bucket/impression_csv/imp_creative_counts/{package}/{date}/modified_test_data_creative_wise_counts_{date}.csv',index=False)
+            sdff.coalesce(230).write.option("delimiter", ",").option("nullValue", 'None').option('nanValue','None').option("treatEmptyValuesAsNulls","false").option("quote", "\"").option("emptyValue", 'None').option("escape", "\"").option("ignoreTrailingWhiteSpace", "true").option("ignoreLeadingWhiteSpace", "true").option("escapeQuotes","true").option("header","true").mode("overwrite").format("parquet").save(f's3a://wafs-v3-bucket/v4/modified_v4_ofa/processed/mf_data_type=impression/mf_package_name={package}/channel={channel}/inserted_date={date}/hour=all/{package}_{date}_all_processed')
+            sdff.groupBy('fraud_sub_category').count().show()
+            sdff = sdff.groupBy('package_name','fraud_category','fraud_sub_category','publisher_name','placement_id','campaign_name','channel','device_type','creative_type','inserted_date').count().withColumnRenamed('count','total_count').withColumnRenamed('package_name','imp_package_name').withColumnRenamed('fraud_category','imp_fraud_category').withColumnRenamed('fraud_sub_category','imp_fraud_sub_category').withColumnRenamed('publisher_name','imp_publisher_name').withColumnRenamed('placement_id','imp_placement_id').withColumnRenamed("campaign_name", "imp_campaign_name").withColumnRenamed("channel", "imp_channel").withColumnRenamed("device_type", "imp_device_type").withColumnRenamed("creative_type", "imp_creative_type")
+            sdff.groupBy('imp_fraud_sub_category').sum('total_count').show()
+            sdff = sdff.withColumn("mf_imp_id", lit(None))
+            sdff = sdff.withColumn("imp_sub_publisher_name",lit("default"))
+            sdff = sdff.withColumn('inserted_date_time',lit(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            sdff.toPandas().to_csv(f's3a://wafs-v3-bucket/v4/modified_v4_ofa/summary/mf_data_type=impression/mf_package_name={package}/channel={channel}/inserted_date={date}/{package}_{date}_summary.csv',index=False)
+            df=sdff.toPandas()
+            sdff.unpersist()
+            engine = create_engine('mysql+pymysql://subham.kumar:%s@10.0.0.108:4019/wafs_v3_prod'% urlquote('x2mD>I'))
+            print("########-----data loading starting---------##################")
+            df.to_sql(name="impression_data_v3_summary", con=engine, if_exists = 'append', index=False,chunksize=2000)
+            engine.dispose()
+        except Exception as e:
+            print(e)
