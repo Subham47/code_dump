@@ -1,0 +1,247 @@
+from log_generator.setup_logging import setupLogging
+from upload.upload_db.upload_on_db import getConnection
+from upload.upload_S3.upload_files_on_S3 import fileUploadOnS3
+
+import pandas as pd
+import os
+from datetime import datetime, timedelta
+import boto3
+import json
+
+print(f" Trigger Started .... !!!!!!!")
+
+lambda_client = boto3.client('lambda','us-west-2')
+s3_resource = boto3.resource('s3')
+my_bucket = s3_resource.Bucket('wafs-v3-bucket')
+
+
+logging, log_file_name = setupLogging('trigger','trigger')
+logging.info(f" Trigger Started .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+logging.info(f" log_file_name  : {log_file_name} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+print('log_file_name',log_file_name)
+
+conn = None
+
+try:
+    conn = getConnection(logging)
+except Exception as e:
+    print('Error in DB connection',e)
+    logging.error(f" Please check the database connection  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+def json_to_csv_convert_lambda(package_name, channel):
+    global logging,lambda_client
+    logging.info(f" json_to_csv_convert_lambda started .... !!!!!!!",extra={'package_name':'whole','func_name':'json_to_csv_convert_lambda'})
+    payload = json.dumps({'package_name': package_name,'channel': channel})
+    logging.info(f" payload : {payload}.... !!!!!!!",extra={'package_name':'whole','func_name':'json_to_csv_convert_lambda'})
+
+    response = lambda_client.invoke(
+        FunctionName = 'arn:aws:lambda:us-west-2:632228229419:function:wafs_v3_global_csv_generator_ecs',
+        InvocationType = 'Event',
+        Payload = bytes(payload,encoding='utf8')
+    )
+
+    logging.info(f" response : {response}.... !!!!!!!",extra={'package_name':'whole','func_name':'json_to_csv_convert_lambda'})
+
+
+def json_to_csv_convertor():
+    global conn, logging
+    df = pd.DataFrame()
+    try:
+        if not conn:
+            conn = getConnection(logging)
+        df = run_on_server()
+        #logging.info(f" sql query json_to_csv_convertor : select package_name, google_platform from master_ofa_processing_config where status='RUNNING' and package_type LIKE '%impression%'; .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+        #df = pd.read_sql_query('select package_name, google_platform from master_ofa_processing_config where status="RUNNING" and package_type LIKE "%impression%";',con = conn)
+    except Exception as e:
+        print('Error in data fetching',e)
+        logging.error(f" Please check the tables data for json_to_csv_convertor  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'json_to_csv_convertor'})
+    return df
+
+def run_on_fargate():
+    global conn, logging
+    df = pd.DataFrame()
+    try:
+        if not conn:
+            conn = getConnection(logging)
+        sql_query = 'select package_name, google_platform from master_ofa_processing_config where status="RUNNING" and ofa_processing_platform="fargate" and package_type LIKE "%impression%";'
+        logging.info(f" sql query  : sql_query .... !!!!!!!",extra={'package_name':'whole','func_name':'run_on_fargate'})
+        df = pd.read_sql_query(sql_query,con = conn)
+    except Exception as e:
+        print('Error in data fetching',e)
+        logging.error(f" Please check the tables data for run_on_fargate  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'run_on_fargate'})
+    return df
+
+def run_on_server():
+    global conn, logging
+    df = pd.DataFrame()
+    try:
+        if not conn:
+            conn = getConnection(logging)
+        logging.info(f" sql query  : select package_name, google_platform from master_ofa_processing_config where status='RUNNING' and ofa_processing_platform='server' and package_type LIKE '%impression%'; .... !!!!!!!",extra={'package_name':'whole','func_name':'run_on_server'})
+        df = pd.read_sql_query('select package_name, google_platform  from master_ofa_processing_config where status="RUNNING" and ofa_processing_platform="server" and package_type LIKE "%impression%";',con = conn)
+    except Exception as e:
+        print('Error in data fetching',e)
+        logging.error(f" Please check the tables data for run_on_server  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'run_on_server'})
+    return df
+
+
+print(' json_to_csv_convertor started '.center(100,'#'))
+logging.info(f" json_to_csv_convertor started .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+df = json_to_csv_convertor()
+if len(df)>0:
+    print('df shape : ',df.shape)
+    logging.info(f" df shape  : {df.shape} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+    hour = (datetime.now() - timedelta(hours = 1)).strftime('%H')
+    for index,row in df.iterrows():
+        try:
+            package_name = row['package_name']
+            logging.info(f" package_name  : {package_name} , hour :  {hour} .... !!!!!!!", extra={'package_name':'whole','func_name':'main'})
+            google_platform = row['google_platform']
+            for channel in google_platform.split(','):
+                print('package_name', package_name)
+                print('channel', channel)
+                logging.info(f" package_name  : {package_name}  , channel : {channel}   , hour : {hour} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+                json_to_csv_convert_lambda(package_name, channel)
+        except Exception as e:
+            print('Error in iteration',e)
+            logging.error(f" package_name  : {package_name}  , google_platform : {google_platform}   , hour : {hour}  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+
+if (datetime.now().strftime('%H')) == '00':
+    print()
+    print(' run_on_fargate started '.center(100,'#'))
+    logging.info(f" run_on_fargate started .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+    df = run_on_fargate()
+    if len(df)>0:
+        print('df shape : ',df.shape)
+        logging.info(f" df shape  : {df.shape} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+        for index,row in df.iterrows():
+            try:
+                package_name = row['package_name']
+                #google_platform = row['google_platform']
+                logging.info(f" package_name  : {package_name} .... !!!!!!!", extra={'package_name':'whole','func_name':'main'})
+                try:
+                    print('package_name', package_name)
+                    argument = f'{package_name}|1'
+                    logging.info(f" argument  : {argument} .... !!!!!!!", extra={'package_name':'whole','func_name':'main'})
+                    print(os.popen(f'python3 /data/wafs_v3/wafs_v3_cron/wafs_v3_impression_parallel/impression_parallel.py "{argument}"').read())
+                except Exception as e:
+                    logging.error(f" package_name  : {package_name} : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+            except Exception as e:
+                print('Error in iteration',e)
+                logging.error(f" package_name  : {package_name}  , google_platform : {google_platform}   , hour : {hour}  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+
+
+
+print()
+print(' run_on_server started '.center(100,'#'))
+logging.info(f" run_on_server started .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+df = run_on_server()
+if len(df)>0:
+    print('df shape : ',df.shape)
+    logging.info(f" df shape  : {df.shape} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+    hour = (datetime.now() - timedelta(hours = 2)).strftime('%H')
+    process_date = (datetime.now() - timedelta(hours = 2)).strftime('%Y-%m-%d')
+    for index,row in df.iterrows():
+        try:
+            package_name = row['package_name']
+            google_platform = row['google_platform']
+            logging.info(f" package_name  : {package_name}  , google_platform : {google_platform}  , hour : {hour}, process_date : {process_date} .... !!!!!!!", extra={'package_name':'whole','func_name':'main'})
+            for channel in google_platform.split(','):
+                print('package_name', package_name)
+                print('channel', channel)
+                print('hour', hour)
+                print('process_date', process_date)
+                logging.info(f" package_name  : {package_name}  , channel : {channel}   , hour : {hour} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+                try:
+                    #print('Fargete run for v4')
+                    payload = json.dumps({"package_name":package_name, "process_date":process_date, "trigger_point":"shell","save_into":"db", "hour":hour, "channel": channel})
+
+                    print('payload', payload)
+                    logging.info(f" payload : {payload} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+                    response = lambda_client.invoke(
+                        FunctionName = 'arn:aws:lambda:us-west-2:632228229419:function:mf_ecs_development_lambda',
+                        InvocationType = 'Event',
+                        Payload = bytes(payload,encoding='utf8')
+                    )
+                    print('response', response)
+                    logging.info(f" response : {response} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+                    #print(f'/data/wafs_v3/wafs_v4_impression_reprocessing_trigger.py -p "{package_name}" -d "{process_date}" -h"{hour}" --ch "{channel}"')
+
+                    #logging.info(f'/data/wafs_v3/wafs_v4_impression_reprocessing_trigger.py -p "{package_name}" -d "{process_date}" -h"{hour}" --ch "{channel}"',extra={'package_name':'whole','func_name':'main'})
+
+                    #print(os.popen(f'/data/wafs_v3/wafs_v4_impression_reprocessing_trigger.py -p "{package_name}" -d "{process_date}" -h"{hour}" --ch "{channel}"'))
+
+                    #print(os.popen('docker container prune -f').read())
+
+                    #print(os.popen(f'docker run --env package_name={package_name} --env process_date={process_date} --env hour={hour} --env channel={channel} imp_v4'))
+                    #print(os.popen('docker container prune -f').read())
+                except Exception as e:
+                    logging.error(f" package_name  : {package_name}  , google_platform : {channel}   , hour : {hour}  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+
+        except Exception as e:
+            print('Error in iteration',e)
+            logging.error(f" package_name  : {package_name}  , google_platform : {google_platform}   , hour : {hour}  : {e} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+
+
+
+
+'''
+if (datetime.now().strftime('%H')) in ['00', '04', '08', '12', '16', '20', '23']:
+    print()
+    print(' RUN the previouslly non processed '.center(100,'#'))
+    logging.info(f" RUN the previouslly non processed .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+    df = run_on_server()
+
+    if len(df)>0:
+        print('df shape : ',df.shape)
+        logging.info(f" df shape  : {df.shape} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+        data_type = 'impression'
+        for index,row in df.iterrows():
+            try:
+                package_name = row['package_name']
+                google_platform = row['google_platform']
+                logging.info(f" package_name  : {package_name}  , google_platform : {google_platform}  , hour : {hour}, process_date : {process_date} .... !!!!!!!", extra={'package_name':'whole','func_name':'main'})
+                for channel in google_platform.split(','):
+                    print('package_name', package_name)
+                    print('channel', channel)
+                    print('process_date', process_date)
+                    logging.info(f" package_name  : {package_name}  , channel : {channel}   , hour : {hour} .... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+
+                    inserted_date_obj = datetime.now() - timedelta(hours = 2)
+                    for i in range(1,5):
+                        inserted_date_obj = inserted_date_obj - timedelta(hours = 1)
+                        inserted_date = inserted_date_obj.strftime("%Y-%m-%d")
+                        hour = inserted_date_obj.strftime('%H')
+                        print('inserted_date', inserted_date)
+                        print('hour', hour)
+                        try:
+                            path = f'v4/v4_ofa/summary/mf_data_type={data_type}/mf_package_name={package_name}/channel={channel}/inserted_date={inserted_date}/hour={hour}'
+                            logging.info(f" {path} checking in S3.... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+                            resp_obj = list(my_bucket.objects.filter(Prefix=path))
+                            if len(resp_obj) == 0:
+                                print(f'{hour} Hour folder is not present')
+                                logging.info(f" package_name  : {package_name}  , channel : {channel}   , hour : {hour}  not present in S3.... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+                                logging.info(f'python3 /data/wafs_v3/wafs_v3_cron/impression_code_trigger/wafs_v3_impression_rerun.py "{package_name}" "{inserted_date}" "{hour}" "{channel}"', extra={'package_name':'whole','func_name':'main'})
+                                print(os.popen(f'python3 /data/wafs_v3/wafs_v3_cron/impression_code_trigger/wafs_v3_impression_rerun.py "{package_name}" "{inserted_date}" "{hour}" "{channel}"').read())
+
+                        except Exception as e:
+                            print('Error in getting objects', e)
+            except Exception as e:
+                print('Error in iteration',e)
+                logging.error(f" package_name  : {package_name}  , google_platform : {google_platform}  : {e} .    ... !!!!!!!",extra={'package_name':'whole','func_name':'main'})
+'''
+try:
+    destination_S3_path = f"processing_logs/impression_logs/{datetime.now().strftime('%Y-%m-%d')}/{log_file_name.split('/')[-1]}"
+    print('destination_S3_path',destination_S3_path)
+
+    fileUploadOnS3(log_file_name, 'wafs-v3-bucket', destination_S3_path, logging)
+    print(os.popen(f'rm -f {log_file_name}').read())
+except Exception as e:
+    print('Error in log file uploading',e)
