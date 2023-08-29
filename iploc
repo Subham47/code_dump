@@ -1,0 +1,215 @@
+import redis
+import pandas as pd
+from ipaddress import ip_address
+import socket, struct
+import time
+from datetime import datetime, timedelta
+import boto3
+from io import BytesIO
+from multiprocessing import Pool
+from itertools import repeat
+from functools import partial
+import os
+import sys
+begin = datetime.fromtimestamp(time.time())
+
+pipe = None
+
+
+#package_name = 'web.tataplay.cpv'
+#inserted_date = '2022-09-11'
+#channel = 'dv360'
+#channel = 'others'
+#hour = '02'
+
+try:
+    package_name = sys.argv[1]
+except Exception as e:
+    print('Please give package_name',e)
+    exit(0)
+
+try:
+    inserted_date = sys.argv[2]
+except Exception as e:
+    print('Please give inserted_date',e)
+    exit(0)
+
+try:
+    hour = sys.argv[3]
+except Exception as e:
+    print('Please give hour',e)
+    exit(0)
+
+try:
+    channel = sys.argv[4]
+except Exception as e:
+    print('Please give channel',e)
+    exit(0)
+
+#channel = os.environ['channel']
+#package_name = os.environ['package_name']
+#print(datetime.now())
+#inserted_date = datetime.now().strftime('%Y-%m-%d')
+#hour = (datetime.now()-timedelta(hours=1)).strftime('%H')
+#inserted_date = (datetime.now()-timedelta(hours=1)).strftime('%Y-%m-%d')
+#package_name = '2022-07-22'
+
+
+print(package_name, inserted_date, hour, channel)
+#exit()
+s3 = boto3.client("s3",'us-west-2')
+
+paginator = s3.get_paginator('list_objects_v2')
+
+response = paginator.paginate(Bucket="wafs-v3-bucket",Prefix = f'v4/v4_raw/mf_data_type=impression/mf_package_name={package_name}/channel={channel}/inserted_date={inserted_date}/hour={hour}/')
+
+
+path_list = [f"s3://wafs-v3-bucket/{i['Key']}" for page in response if ('Contents' in page) for i in page['Contents']]
+
+print('response',len(path_list))
+
+s3_resource = boto3.resource('s3')
+
+def dottedQuadToNum(ip):
+    '''convert decimal dotted quad string to long integer'''
+    try:
+        ip6 = socket.inet_pton(socket.AF_INET6, ip)
+        a, b = struct.unpack(">QQ", ip6)
+        return (a << 64) | b
+    except Exception as e:
+        print("Error in dottedQuadToNum "+str(e))
+        return None
+
+def ipv4(value, ip_to_int):
+    try:
+        if value and len(value)>0:
+            if value[0].split(':')[3]=='s':
+                score = int(value[0].split(':')[0])
+                if score > ip_to_int:
+                    value = None
+    except Exception as e:
+        print("Error in ipv4 "+str(e))
+    return value
+
+def ipToInt(ip):
+    ip = str(ip).split(',')[0]
+    if ':' in ip:
+        key_name_postfix = '_ipv6'
+        ip_to_int = dottedQuadToNum(ip)
+        try:
+            ip_to_int = str(ip_to_int)
+            ip_to_int = ('0'*(40-len(ip_to_int))) + ip_to_int
+        except Exception as e:
+            print('ip is not converted into int '+str(e))
+            ip_to_int = None
+
+    elif '.' in ip:
+        try:
+            ip_to_int = ip_address(ip)
+            ip_to_int = int(ip_to_int)
+        except Exception as e:
+            print('ip is not converted into int '+str(e))
+    return ip_to_int
+
+def ipv6(out, ip_to_int):
+    value = None
+    try:
+        if out and len(out)>0:
+            max_ip = out[0].split('|')[0]
+            min_ip = out[0].split('|')[1]
+            if int(max_ip)>=int(ip_to_int) and int(min_ip)<=int(ip_to_int):
+                if len(out[0].split('|'))==4:
+                    location = 'abc:'+str(out[0].split('|')[2])+':'+str(out[0].split('|')[3])
+                    value = [location]
+                elif len(out[0].split('|'))==5:
+                    proxy = 'abc:'+str(out[0].split('|')[-2])
+                    value = [proxy]
+    except Exception as e:
+        print("Error in ipv6 "+str(e))
+    return value
+
+def getValueFromIP(ip, ip_to_int, credentials):
+    global pipe
+    value = None
+    ip = str(ip).split(',')[0]
+    key_name_postfix = ''
+    if ':' in ip:
+        key_name_postfix = '_ipv6'
+        if ip_to_int is None:
+            return value
+        try:
+            key_name = credentials.get('key_name')+key_name_postfix
+            pipe.zrangebylex(key_name,'['+ip_to_int,'+',0,1)
+        except Exception as e:
+            print("Error in redis get data "+str(e))
+            return "Error in redis get data "+str(e)
+    elif '.' in ip:
+        if ip_to_int is None:
+            return value
+        try:
+            key_name = credentials.get('key_name')+key_name_postfix
+            pipe.zrangebyscore(key_name,ip_to_int,'inf',0,1)
+        except Exception as e:
+            print("Error in redis get data "+str(e))
+            return "Error in redis get data "+str(e)
+    r = pipe.execute()
+    return r[0]
+
+def countryParse(ip_to_loc_value):
+    country_code =  'NA'
+    state_name = 'NA'
+    if ip_to_loc_value is not None and len(ip_to_loc_value)>0:
+        country_code = ip_to_loc_value[0].split(':')[1]
+        state_name = ip_to_loc_value[0].split(':')[2]
+        if '-' == country_code or '-' == state_name:
+            country_code = 'NA'
+            state_name = 'NA'
+    return country_code+"_"+state_name
+
+def vpnParse(ip_to_proxy_value):
+    vpn_category = None
+    if ip_to_proxy_value is not None and len(ip_to_proxy_value)>0:
+        vpn_category = ip_to_proxy_value[0].split(':')[1]
+    return vpn_category
+
+
+
+def parallel_data_proc(path, package_name, inserted_date):
+    global pipe
+    df = pd.read_json(path, compression='zip', lines=True, dtype='str', convert_dates=False)
+
+    df.drop('mf_package_name',axis=1,inplace=True)
+    unique_ip_list_df = pd.DataFrame(df['ip'].unique()).reset_index(drop=True).rename(columns={0: 'ip'})
+
+    country_mapping_redis_cred = {"host":"10.0.0.44", "port":6379, "db":1,"key_name":"ip_to_location_table"}
+    redis_con_country_mapping = redis.Redis(host=country_mapping_redis_cred.get('host'), port=int(country_mapping_redis_cred.get('port')),db= country_mapping_redis_cred.get('db'),decode_responses=True)
+    pipe = redis_con_country_mapping.pipeline()
+    unique_ip_list_df['ip_to_int'] = unique_ip_list_df['ip'].apply(ipToInt)
+    unique_ip_list_df['country'] = unique_ip_list_df[['ip','ip_to_int']].apply(lambda x : ipv6(getValueFromIP(x['ip'],x['ip_to_int'],{"key_name":"ip_to_location_table"}),x['ip_to_int']) if ':' in str(x['ip']).split(',')[0] else ipv4(getValueFromIP(x['ip'],x['ip_to_int'],{"key_name":"ip_to_location_table"}),x['ip_to_int']),axis=1)
+
+    unique_ip_list_df['country'] = unique_ip_list_df['country'].apply(countryParse)
+    unique_ip_list_df['vpn'] = unique_ip_list_df[['ip','ip_to_int']].apply(lambda x : ipv6(getValueFromIP(x['ip'],x['ip_to_int'],{"key_name":"ip_to_proxy_table"}),x['ip_to_int']) if ':' in str(x['ip']).split(',')[0] else ipv4(getValueFromIP(x['ip'],x['ip_to_int'],{"key_name":"ip_to_proxy_table"}),x['ip_to_int']),axis=1)
+    unique_ip_list_df['vpn']  = unique_ip_list_df['vpn'].apply(vpnParse)
+
+    unique_ip_list_df.drop('ip_to_int',axis=1,inplace=True)
+
+    df = df.merge(unique_ip_list_df, on='ip', how='left')
+    df['country_x'] = df['country_y']
+    df = df.rename(columns = {'country_x':'country'})
+    df.drop('country_y',axis=1,inplace=True)
+    destination_path = path.replace('.zip','.csv').replace('v4_raw','v4_processed')
+
+    df.to_csv(destination_path, index=False, sep=',')
+
+
+parallel_data_proc_static_par = partial(parallel_data_proc, package_name=package_name, inserted_date=inserted_date)
+with Pool(7) as p:
+    p.map(parallel_data_proc_static_par, path_list)
+
+end = datetime.fromtimestamp(time.time())
+value = end-begin
+print("Total time taken in : ", value)
+print('Docker starting')
+print(os.popen('docker container prune -f').read())
+print(os.popen(f"docker run --env process_date={inserted_date} --env package_name={package_name} --env channel={channel} --env hour={hour} imp_v4").read())
+print(os.popen('docker container prune -f').read())
